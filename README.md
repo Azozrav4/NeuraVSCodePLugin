@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/neura-logo.png" alt="Neura" width="420">
+  <img src="assets/neura-logo-vscode.png" alt="Neura" width="420">
 </p>
 
 # Neura
