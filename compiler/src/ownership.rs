@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn rejects_mutable_borrow_of_immutable() {
         let (d, _) = ownership(
-            "fn main():\n    a = Tensor([1.0, 2.0])\n    b = &mut a\n    print(b)\n",
+            "fn main():\n    let a = Tensor([1.0, 2.0])\n    b = &mut a\n    print(b)\n",
         );
         assert!(d.iter().any(|x| x.code == "E0406"), "{:#?}", d);
     }

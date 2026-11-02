@@ -43,7 +43,6 @@ pub(crate) struct Var {
 }
 
 pub(crate) struct FnState {
-    pub name: String,
     pub ret_ann: Option<Ty>,
     pub ret_span: Span,
     pub returns: Vec<Ty>,
@@ -262,7 +261,6 @@ impl Checker {
         });
         let ret_ann = if f.ret.is_some() { Some((*declared.ret).clone()) } else { None };
         self.fn_state = Some(FnState {
-            name: f.name.clone(),
             ret_ann,
             ret_span: f.ret.as_ref().map(|t| t.span()).unwrap_or(f.span),
             returns: Vec::new(),

@@ -140,22 +140,6 @@ impl<'a> FnLower<'a> {
         r
     }
 
-    fn local_ty(&self, id: LocalId) -> Ty {
-        self.f
-            .locals
-            .get(id as usize)
-            .map(|l| l.ty.clone())
-            .unwrap_or(Ty::Any)
-    }
-
-    fn ty_of_expr(&self, e: &NirExpr) -> Ty {
-        match e {
-            NirExpr::Local(id) | NirExpr::Move(id) => self.local_ty(*id),
-            NirExpr::Borrow { local, .. } => self.local_ty(*local),
-            other => other.ty(),
-        }
-    }
-
     fn emit(&mut self, inst: Inst, span: (usize, usize)) -> usize {
         let at = self.code.len();
         self.code.push(inst);

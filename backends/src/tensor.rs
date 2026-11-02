@@ -425,7 +425,6 @@ impl Tensor {
         if matches!(op, T::Div) && dtype.is_int() {
             dtype = DType::F64;
         }
-        self.cast(if self.dtype == dtype { dtype } else { dtype });
         if dtype.is_int() {
             Tensor::from_i64(dtype, out_shape, vals.iter().map(|v| *v as i64).collect())
         } else if dtype == DType::Bool {
@@ -827,7 +826,8 @@ impl Tensor {
     }
 }
 
-fn strides_of(shape: &[usize]) -> Vec<usize> {    let mut s = vec![1usize; shape.len()];
+fn strides_of(shape: &[usize]) -> Vec<usize> {
+    let mut s = vec![1usize; shape.len()];
     for i in (0..shape.len().saturating_sub(1)).rev() {
         s[i] = s[i + 1] * shape[i + 1];
     }
@@ -849,6 +849,19 @@ fn multi_index_in(shape: &[usize], mut flat: usize) -> Vec<usize> {
         flat %= strides[i];
     }
     idx
+}
+
+/// Convert a host value to the integer representation of `dtype`.
+///
+/// Integer storage is transparent about wrapping: storing 300 in an `i8`
+/// tensor yields 44, exactly as a narrowing cast would on hardware.
+fn int_store(v: f64, dtype: DType) -> i64 {
+    match dtype {
+        DType::I8 => (v as i64) as i8 as i64,
+        DType::I32 => (v as i64) as i32 as i64,
+        DType::I64 => v as i64,
+        _ => v as i64,
+    }
 }
 
 /// Round a value to the precision of its declared element type.
