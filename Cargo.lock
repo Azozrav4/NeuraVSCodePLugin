@@ -44,6 +44,7 @@ version = "0.1.0"
 name = "neura-optimizer"
 version = "0.1.0"
 dependencies = [
+ "neura-backends",
  "neura-ir",
 ]
 
@@ -58,3 +59,10 @@ dependencies = [
 [[package]]
 name = "npack"
 version = "0.1.0"
+dependencies = [
+ "neura-compiler",
+ "neura-formatter",
+ "neura-ir",
+ "neura-optimizer",
+ "neura-runtime",
+]

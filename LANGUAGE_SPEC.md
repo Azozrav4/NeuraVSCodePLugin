@@ -162,18 +162,43 @@ an optional help line, and convert to JSON.
 Execution starts at `fn main()` (no parameters). The toolchain provides:
 
 ```
-neura check FILE            parse + typecheck + ownership + optimization report
-neura build FILE            write FILE.neurabc (EIR) and optimization report
-neura run FILE [--opt=...]  execute
-neura inspect FILE          types and locals per function
-neura graph FILE            TIR/ADIR/EIR views of the program
+neura check FILE            parse + typecheck + ownership check
+neura build FILE            write FILE.neurabc (checked source + header) and cache it
+neura run FILE [--opt=...]  compile, optimise and execute main
+neura inspect FILE          types and locals per function, plus EIR disassembly
+neura graph FILE            TIR as textual MLIR (neura_tir dialect)
 neura profile FILE          per-operation execution counts and time
 neura optimize-report FILE  NAOE decisions as JSON or text
-neura fmt FILE              canonical formatting
+neura fmt FILE              canonical formatting (--check to verify only)
+neura version               compiler version
 ```
 
 Policies: `--opt=auto|aggressive|debug|off` (default `auto`), `--device=cpu|cuda|rocm|auto`,
 `--precision=strict|mixed_bf16|mixed_fp16` (default `strict`).
+
+Other flags: `--output=PATH` (`build`), `--json` (machine-readable output),
+`--trace` (print each executed instruction), `--quiet`, `--training` (run layers
+in training mode).
+
+A `.neurabc` artifact is self-contained: a header records the source hash,
+program name and policies, and the body is canonical source. Loading an artifact
+re-verifies the hash, so `build` and `run` cannot silently diverge.
+
+Packages are managed by `npack`:
+
+```
+npack init DIR              create npack.toml, src/main.neura, tests/
+npack install [DIR]         resolve dependencies and write npack.lock
+npack build [DIR]           compile to target/<name>.neurabc
+npack run [DIR]             build and execute the entry point
+npack test [DIR]            compile and run every tests/*.neura file
+```
+
+`npack.toml` uses `[package]` (`name`, `version`, `entry`) and `[dependencies]`
+with `name = { path = "..." }` or a semver requirement (`"1.2.3"`, `"^1.2.3"`,
+`"~1.2.3"`, `"*"`). Version-only dependencies resolve from the offline cache
+(`$NPACK_HOME`, default `~/.npack`); there is no network access in this build, and
+a missing cached package is reported as such.
 
 ## 9. Not yet implemented
 
@@ -182,3 +207,7 @@ Policies: `--opt=auto|aggressive|debug|off` (default `auto`), `--device=cpu|cuda
 * Mutable fields/elements directly (`E0311`); use whole-value assignment.
 * GPU kernel generation (interfaces exist; see ARCHITECTURE.md).
 * Linked LLVM native object emission; `.neurabc` plus MLIR text is produced instead.
+* Importing symbols from third-party `npack` packages: the module system currently
+  resolves the `neura.*` standard library only. `npack` still resolves, locks and
+  build-verifies dependencies.
+* Registry downloads (no network access in this build).

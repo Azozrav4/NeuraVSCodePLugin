@@ -9,3 +9,8 @@ name = "npack"
 path = "src/main.rs"
 
 [dependencies]
+neura-compiler = { path = "../../compiler" }
+neura-formatter = { path = "../formatter" }
+neura-ir = { path = "../../ir" }
+neura-optimizer = { path = "../../optimizer" }
+neura-runtime = { path = "../../runtime" }

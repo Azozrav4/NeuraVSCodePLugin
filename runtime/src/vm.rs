@@ -287,7 +287,13 @@ impl<'p> Machine<'p> {
                 }
                 let op = resolve_dynamic(op, dyn_dims, frame)?;
                 let out = self.apply_op(&op, &trefs)?;
-                let _ = ty;
+                // The compiler's declared element type is authoritative: this
+                // is where an opt-in mixed-precision plan takes effect.
+                let out = if out.borrow().data.dtype != ty.dtype {
+                    crate::autograd::cast(&out, ty.dtype)
+                } else {
+                    out
+                };
                 self.write(frame, *dst, Value::Tensor(out));
                 Ok(Flow::Next)
             }

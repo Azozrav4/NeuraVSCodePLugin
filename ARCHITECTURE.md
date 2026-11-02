@@ -67,6 +67,10 @@ elementwise maps and reductions; numerical results do not depend on thread count
 * `backward` topologically sorts reachable nodes, seeds the root gradient with ones
   and accumulates vector-Jacobian products in reverse order;
 * broadcasting is undone by sum-reduction to the input shape;
+* `gather` uses same-rank index semantics (`out.shape == indices.shape`, with the
+  coordinate on `axis` replaced by the index value); its VJP scatter-adds the
+  upstream gradient at exactly those coordinates. Cross-entropy relies on this to
+  select one target logit per row;
 * layer forward passes are written with primitive ops, so gradients for Linear,
   GELU, LayerNorm, BatchNorm, Conv and Embedding are produced by the same engine;
 * saved tensors are exactly the input `Rc`s held by the graph; `Drop` from EIR and
@@ -120,11 +124,35 @@ vendor SDK.
 
 ## Packages and tooling
 
-* `npack` — `init`, `install`, `build`, `run`, `test` with a reproducible
-  `npack.toml` manifest, semver requirement parsing and deterministic resolution
-  against local and registry caches (network access is never faked).
-* `tools/formatter` — canonical, idempotent formatter driven by the lexer.
+* `npack` — `init`, `install`, `build`, `run`, `test`. It parses `npack.toml`,
+  resolves `path` dependencies recursively (rejecting cycles and version
+  conflicts), resolves version requirements from the offline cache, writes a
+  deterministic `npack.lock`, and refuses to build when the lock does not match
+  the manifest. Registry downloads are reported as unavailable instead of faked.
+  Dependency *symbols* are not yet importable: the compiler's module system covers
+  the `neura.*` standard library only (see `LANGUAGE_SPEC.md` §9).
+* `tools/formatter` — canonical, idempotent formatter driven by the AST: minimal
+  parentheses by precedence, four-space blocks, `elif` reconstruction.
 * `cli` — `check`, `build`, `run`, `inspect`, `graph`, `profile`,
-  `optimize-report`, plus `fmt`.
+  `optimize-report`, plus `fmt` and `version`.
 * Diagnostics are structured (`severity`, stable code, span, notes, help) and
   serialisable to JSON (`Diagnostic::to_json`).
+
+## Tests, examples and benchmarks
+
+Tests live next to the code they cover, plus `cli/tests/e2e.rs`, which runs the
+real `neura` binary and checks stdout/exit codes for: the required autograd
+example (`7.0`), tensor ops, MLIR emission, `.neurabc` build→run round-trip,
+diagnostics, formatter idempotence, and training on `examples/datasets/blobs.csv`
+with save → load prediction parity.
+
+```
+cargo test --workspace
+cargo run --release -p neura-runtime --example benchmarks
+```
+
+Benchmarks measure the host at run time (no stored numbers). On the development
+machine (aarch64, release) they reported approximately: matmul 256³ f32
+1.7 GFLOP/s, GELU 1M f32 86 Melem/s, softmax 128×1000 98 Melem/s, conv2d
+4×8×32×32 0.46 GFLOP/s, and a 64-sample training step at ~6.3k samples/s. These
+are unoptimised reference kernels, not vendor-BLAS figures.

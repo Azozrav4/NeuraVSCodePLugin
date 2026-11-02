@@ -705,30 +705,43 @@ impl Tensor {
         Tensor::from_f64(dtype, vec![n, o, out_w], vals)
     }
 
+    /// Select elements along `axis` using same-rank integer `indices`.
+    ///
+    /// The result has the shape of `indices`; position `p` is copied from
+    /// `self[p]` with its `axis` coordinate replaced by `indices[p]`. Every
+    /// non-`axis` dimension must match, so the index tensor determines the
+    /// output shape exactly.
     pub fn gather(&self, indices: &Tensor, axis: usize) -> TResult<Tensor> {
         if axis >= self.rank() {
             return Err("gather axis out of range".into());
         }
-        let mut out_shape: Vec<usize> = self.shape[..axis].to_vec();
-        out_shape.extend(indices.shape.iter().cloned());
-        out_shape.extend(self.shape[axis + 1..].iter().cloned());
+        if indices.rank() != self.rank() {
+            return Err(format!(
+                "gather expects rank-{} indices, found {:?}",
+                self.rank(),
+                indices.shape
+            ));
+        }
+        for (d, (data_dim, idx_dim)) in self.shape.iter().zip(indices.shape.iter()).enumerate() {
+            if d != axis && data_dim != idx_dim {
+                return Err(format!(
+                    "gather index dim {} is {} but data dim is {}",
+                    d, idx_dim, data_dim
+                ));
+            }
+        }
+        let out_shape = indices.shape.clone();
         let n: usize = out_shape.iter().product();
+        let data_strides = self.strides();
         let mut vals = Vec::with_capacity(n);
         for flat in 0..n {
-            let idx = multi_index_in(&out_shape, flat);
-            let prefix = &idx[..axis];
-            let mid = &idx[axis..axis + indices.rank()];
-            let suffix = &idx[axis + indices.rank()..];
-            let mid_flat = dot(mid, &strides_of(&indices.shape));
-            let pos = indices.i64_at(mid_flat);
+            let mut idx = multi_index_in(&out_shape, flat);
+            let pos = indices.i64_at(flat);
             if pos < 0 || pos as usize >= self.shape[axis] {
                 return Err(format!("gather index {} out of range", pos));
             }
-            let mut src = Vec::new();
-            src.extend_from_slice(prefix);
-            src.push(pos as usize);
-            src.extend_from_slice(suffix);
-            vals.push(self.f64_at(dot(&src, &self.strides())));
+            idx[axis] = pos as usize;
+            vals.push(self.f64_at(dot(&idx, &data_strides)));
         }
         self.rebuild(out_shape, vals)
     }

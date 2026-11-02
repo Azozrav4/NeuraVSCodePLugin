@@ -6,3 +6,4 @@ license.workspace = true
 
 [dependencies]
 neura-ir = { path = "../ir" }
+neura-backends = { path = "../backends" }

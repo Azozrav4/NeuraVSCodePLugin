@@ -475,11 +475,10 @@ pub fn infer_shape(op: &TensorOp, inputs: &[TensorTy]) -> Result<TensorTy, Strin
             if *axis >= data.shape.len() {
                 return Err("gather axis out of range".into());
             }
-            let mut sh: Vec<Dim> = Vec::new();
-            sh.extend(data.shape[..*axis].iter().cloned());
-            sh.extend(idx.shape.iter().cloned());
-            sh.extend(data.shape[*axis + 1..].iter().cloned());
-            Ok(TensorTy::new(data.dtype, sh))
+            if idx.shape.len() != data.shape.len() {
+                return Err("gather expects indices with the same rank as the data".into());
+            }
+            Ok(TensorTy::new(data.dtype, idx.shape.clone()))
         }
         TensorOp::BroadcastTo { shape } => {
             let t = inputs.first().ok_or("broadcast_to expects 1 input")?;

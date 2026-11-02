@@ -337,8 +337,23 @@ impl Layer {
                         return Err(format!("Embedding index out of range [0, {})", vocab));
                     }
                 }
-                let _ = dim;
-                apply(&TensorOp::Gather { axis: 0 }, &[table.clone(), x.clone()], true, 0)
+                // Gather needs same-rank indices: expand every token id across
+                // the embedding dimension so each output row keeps all `dim`
+                // values, then restore the leading index-shaped dimensions.
+                let n = idx.numel();
+                let column = reshape(x, &[n, 1])?;
+                let expanded = apply(
+                    &TensorOp::BroadcastTo {
+                        shape: vec![Dim::Static(n), Dim::Static(*dim)],
+                    },
+                    &[column],
+                    false,
+                    0,
+                )?;
+                let gathered = apply(&TensorOp::Gather { axis: 0 }, &[table.clone(), expanded], true, 0)?;
+                let mut out_shape = idx.shape.clone();
+                out_shape.push(*dim);
+                reshape(&gathered, &out_shape)
             }
             Layer::Conv2D { w, b, in_channels, kernel, stride, padding, .. } => {
                 let xd = x.borrow().data.clone();
@@ -749,6 +764,13 @@ pub fn cross_entropy(logits: &TRef, targets: &TRef) -> Result<TRef, String> {
     if targets_data.dtype.is_float() {
         return Err("cross_entropy targets must be integer class indices".into());
     }
+    if targets_data.numel() != shape[0] {
+        return Err(format!(
+            "cross_entropy expects {} targets for {} rows",
+            shape[0],
+            shape[0]
+        ));
+    }
     let max = apply(
         &TensorOp::ReduceMax { axis: Some(1), keepdim: true },
         &[logits.clone()],
@@ -765,15 +787,16 @@ pub fn cross_entropy(logits: &TRef, targets: &TRef) -> Result<TRef, String> {
     )?;
     let logsum = unary(TensorOp::Log, &sum)?;
     let logsum = bin(TensorOp::Add, &logsum, &max)?;
-    let picked = apply(&TensorOp::Gather { axis: 1 }, &[logits.clone(), targets.clone()], true, 0)?;
-    let picked = reshape(&picked, &{
-        let mut s = picked.borrow().data.shape.clone();
-        s.push(1);
-        s
-    })?;
+    // Gather selects one class per row: with `[batch, 1]` indices the result
+    // keeps that shape, so `picked[i, 0] == logits[i, targets[i]]`.
+    let batch = shape[0];
+    let index = reshape(targets, &[batch, 1])?;
+    let picked = apply(&TensorOp::Gather { axis: 1 }, &[logits.clone(), index], true, 0)?;
     let logp = bin(TensorOp::Sub, &picked, &logsum)?;
-    let loss = apply(&TensorOp::Mean { axes: vec![0, 1], keepdim: false }, &[logp], true, 0)?;
-    Ok(loss)
+    let mean = apply(&TensorOp::Mean { axes: vec![0, 1], keepdim: false }, &[logp], true, 0)?;
+    // `mean(log p_target)` is the negative cross entropy; gradients must
+    // descend on `-mean(log p_target)`, so the reported loss is the negation.
+    unary(TensorOp::Neg, &mean)
 }
 
 /// Train `model` on `dataset` for `epochs`, reporting per-epoch loss/accuracy.
@@ -843,3 +866,49 @@ pub fn count_correct(logits: &TRef, targets: &Tensor) -> usize {
     }
     correct
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::autograd;
+    use crate::data::Dataset;
+    use crate::optim::{OptKind, Optimizer};
+    use crate::value::{tensor, trainable};
+    use neura_backends::tensor::Tensor;
+    use neura_ir::types::DType;
+
+    #[test]
+    fn cross_entropy_matches_the_analytic_value_and_gradient() {
+        let logits = trainable(Tensor::from_f64(DType::F64, vec![2, 2], vec![0.0; 4]).unwrap());
+        let targets = tensor(Tensor::from_i64(DType::I64, vec![2], vec![0, 1]).unwrap());
+        let loss = cross_entropy(&logits, &targets).unwrap();
+        let value = loss.borrow().data.item().unwrap();
+        assert!((value - 2f64.ln()).abs() < 1e-9, "loss was {}", value);
+        autograd::backward(&loss).unwrap();
+        let g = logits.borrow().grad.clone().expect("no gradient");
+        // dL/dlogit[i][j] = (p_j - 1[j == target_i]) / batch with p = 1/2.
+        assert!((g.f64_at(0) + 0.25).abs() < 1e-9, "target logit gradient was {}", g.f64_at(0));
+        assert!((g.f64_at(1) - 0.25).abs() < 1e-9);
+        assert!((g.f64_at(2) - 0.25).abs() < 1e-9);
+        assert!((g.f64_at(3) + 0.25).abs() < 1e-9);
+    }
+
+    #[test]
+    fn linear_model_learns_a_separable_problem() {
+        let features = vec![0.0, 0.0, 1.0, 1.0, 4.0, 4.0, 5.0, 5.0];
+        let ds = Dataset::new(
+            Tensor::from_f64(DType::F32, vec![4, 2], features).unwrap(),
+            Tensor::from_i64(DType::I64, vec![4], vec![0, 0, 1, 1]).unwrap(),
+        )
+        .unwrap();
+        let model = Layer::sequential(vec![Layer::linear(2, 2, true, 7)]);
+        let mut opt = Optimizer::new(OptKind::Sgd { momentum: 0.0 }, 0.5, model.params());
+        let mut report = Vec::new();
+        train(&model, &ds, 60, 4, &mut opt, 3, &mut report).unwrap();
+        let xs = tensor(ds.features.clone());
+        let logits = model.forward(&xs, false, 0).unwrap();
+        let preds = tensor(logits.borrow().data.clone());
+        assert_eq!(count_correct(&preds, &ds.labels), 4);
+    }
+}
+

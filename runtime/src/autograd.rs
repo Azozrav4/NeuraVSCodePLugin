@@ -40,6 +40,7 @@ pub enum Vjp {
     Gather { axis: usize, input_shape: Vec<usize> },
     Dropout { mask: Tensor },
     Broadcast { input_shape: Vec<usize> },
+    Cast { input_dtype: DType },
 }
 
 fn cache_key(node: &TRef) -> usize {
@@ -563,28 +564,49 @@ fn conv1d_vjp(
     }
 }
 
+/// Scatter-add the upstream gradient back to the selected positions.
+///
+/// `indices` has the same shape as `g`, and position `p` of `g` came from
+/// `data[p]` with its `axis` coordinate replaced by `indices[p]`, so the
+/// gradient contribution goes to exactly that coordinate.
 fn gather_vjp(g: &Tensor, indices: &Tensor, input_shape: &[usize], axis: usize) -> Result<Tensor, String> {
-    let mut out = Tensor::zeros(g.dtype, input_shape.to_vec());
-    let mut vals = out.to_f64_vec();
-    let outer: usize = input_shape[..axis].iter().product();
-    let inner: usize = input_shape[axis + 1..].iter().product();
-    let table_len = input_shape[axis];
-    let idx_n = indices.numel();
-    for o in 0..outer {
-        for i in 0..idx_n {
-            let pos = indices.i64_at(i);
-            if pos < 0 || pos as usize >= table_len {
-                return Err(format!("gather index {} out of range", pos));
-            }
-            for k in 0..inner {
-                let gi = (o * idx_n + i) * inner + k;
-                let dst = (o * table_len + pos as usize) * inner + k;
-                vals[dst] += g.f64_at(gi);
-            }
-        }
+    if indices.shape != g.shape {
+        return Err("gather gradient shape does not match the index tensor".into());
     }
-    out = Tensor::from_f64(g.dtype, input_shape.to_vec(), vals)?;
-    Ok(out)
+    let strides = row_major_strides(input_shape);
+    let mut vals = vec![0.0; input_shape.iter().product::<usize>()];
+    for flat in 0..g.numel() {
+        let mut coord = unravel(&g.shape, flat);
+        let pos = indices.i64_at(flat);
+        if pos < 0 || pos as usize >= input_shape[axis] {
+            return Err(format!("gather index {} out of range", pos));
+        }
+        coord[axis] = pos as usize;
+        let dst: usize = coord.iter().zip(strides.iter()).map(|(c, s)| c * s).sum();
+        vals[dst] += g.f64_at(flat);
+    }
+    Tensor::from_f64(g.dtype, input_shape.to_vec(), vals)
+}
+
+fn row_major_strides(shape: &[usize]) -> Vec<usize> {
+    let mut strides = vec![1usize; shape.len()];
+    for i in (0..shape.len().saturating_sub(1)).rev() {
+        strides[i] = strides[i + 1] * shape[i + 1];
+    }
+    strides
+}
+
+fn unravel(shape: &[usize], mut flat: usize) -> Vec<usize> {
+    let strides = row_major_strides(shape);
+    let mut coord = vec![0usize; shape.len()];
+    for i in 0..shape.len() {
+        if shape[i] == 0 {
+            continue;
+        }
+        coord[i] = flat / strides[i];
+        flat %= strides[i];
+    }
+    coord
 }
 
 /// Compute the gradient for input `index` of an operation.
@@ -752,7 +774,19 @@ pub fn vjp(
         }
         Vjp::Dropout { mask } => mul(g, mask),
         Vjp::Broadcast { input_shape } => unbroadcast(g, input_shape),
+        Vjp::Cast { input_dtype } => Ok(g.cast(*input_dtype)),
     }
+}
+
+/// Round a tensor to a declared element type, keeping the autograd edge so
+/// gradients flow back through the cast with the input's precision.
+pub fn cast(t: &TRef, dtype: DType) -> TRef {
+    let input_dtype = t.borrow().data.dtype;
+    if input_dtype == dtype {
+        return t.clone();
+    }
+    let data = t.borrow().data.cast(dtype);
+    TNode::derived(data, vec![t.clone()], Vjp::Cast { input_dtype })
 }
 
 fn equal_mask(a: &Tensor, b: &Tensor) -> Result<Tensor, String> {
