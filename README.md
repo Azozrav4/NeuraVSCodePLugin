@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/neura-logo.png" alt="Neura" width="420">
+</p>
+
 # Neura
 
 A compiled, statically typed programming language for numerical and machine-learning
