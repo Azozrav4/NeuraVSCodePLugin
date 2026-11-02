@@ -1,5 +1,0 @@
-fn main():
-    x = Tensor([2.0], requires_grad=true)
-    y = x * x + 3.0 * x
-    y.backward()
-    print(x.grad)
