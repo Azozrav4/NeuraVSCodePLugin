@@ -223,7 +223,7 @@ impl<'a> Lexer<'a> {
         let mut at_line_start = true;
         let mut line_had_token = false;
         let mut line_indent = 0usize;
-        while let Some(c) = self.peek() {
+        while self.peek().is_some() {
             if at_line_start && self.bracket_depth == 0 {
                 // Measure indentation.
                 let mut indent = 0usize;
@@ -308,6 +308,7 @@ impl<'a> Lexer<'a> {
                             self.push(TokenKind::Newline, start, line, col, line_indent);
                         }
                         at_line_start = true;
+                        line_had_token = false;
                     }
                 }
                 '#' => {

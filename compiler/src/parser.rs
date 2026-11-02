@@ -272,6 +272,11 @@ impl Parser {
                     }
                 }
                 if !self.eat(&TokenKind::Comma) {
+                    if self.eat(&TokenKind::Semi) {
+                        if let TokenKind::Ident(d) = self.advance() {
+                            dtype = Some(d);
+                        }
+                    }
                     break;
                 }
             }
