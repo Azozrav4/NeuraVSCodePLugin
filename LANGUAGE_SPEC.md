@@ -110,7 +110,7 @@ print(x.grad)
 ```
 
 `y.backward()` seeds `dy/dy = 1`, walks the graph in reverse topological order and
-accumulates VJPs into `.grad`. The example prints `[7]`. Supported dtypes: `f32`,
+accumulates VJPs into `.grad`. The example prints `Tensor[1](7.0)`. Supported dtypes: `f32`,
 `f64`, `f16`, `bf16`, `i8`, `i32`, `i64`, `bool`.
 
 ## 6. Standard library surface
