@@ -91,6 +91,73 @@ Flags: `--opt=auto|aggressive|debug|off`, `--device=auto|cpu|cuda|rocm`,
 `--json` makes output machine-readable for agents and CI. `neura graph` emits real
 MLIR textual form so an installed `mlir-opt`/`llc` toolchain can consume it.
 
+## VS Code extension
+
+The [`vscode-neura/`](vscode-neura) directory contains a VS Code extension that adds
+`.neura` syntax highlighting and runs the real `neura` compiler for live error
+checking, build and run. It drives the `neura` binary (`neura check --json`) as a
+subprocess; it does not link the Rust crates.
+
+### Prerequisites
+
+- VS Code `1.75` or newer.
+- Node.js and npm (to build the extension).
+- A built `neura` binary — from the repository root run `cargo build --release`
+  (or `--debug`), or install `neura` somewhere on your `PATH`.
+
+### Build the extension
+
+```sh
+cd vscode-neura
+npm install
+npm run compile      # tsc -p ./  ->  out/extension.js
+```
+
+### Install it into VS Code
+
+**Option A — try it in a development host (no install).** Open the `vscode-neura/`
+folder in VS Code and press `F5`. This compiles the extension and launches an
+*Extension Development Host* window with the extension loaded; the bundled
+[`.vscode/launch.json`](vscode-neura/.vscode/launch.json) and
+[`tasks.json`](vscode-neura/.vscode/tasks.json) wire up the pre-launch compile.
+
+**Option B — install it permanently as a `.vsix`.**
+
+```sh
+cd vscode-neura
+npx @vscode/vsce package          # produces neura-0.1.0.vsix
+code --install-extension neura-0.1.0.vsix
+```
+
+Alternatively, use the VS Code UI: `Extensions` view → `...` menu →
+*Install from VSIX…* and pick the generated file.
+
+**Option C — link the folder directly.** Copy or symlink `vscode-neura/` into your
+extensions directory (`~/.vscode/extensions/` on Linux/macOS,
+`%USERPROFILE%\.vscode\extensions\` on Windows) and restart VS Code. Remember to
+re-run `npm run compile` after changing the source.
+
+### Point the extension at the compiler
+
+By default the extension looks for `neura` on your `PATH`, then for
+`target/release/neura` or `target/debug/neura` in the workspace. To override, set
+any of these in VS Code settings:
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `neura.compilerPath` | `neura` | Path to the compiler binary (bare command, absolute, or workspace-relative). |
+| `neura.checkOnType` | `true` | Re-check for errors while typing (debounced). |
+| `neura.checkOnSave` | `true` | Check for errors on every save. |
+| `neura.compilerArgs` | `[]` | Extra flags for every invocation, e.g. `--opt=aggressive`. |
+
+### Using it
+
+Open any `.neura` file: errors and warnings appear inline as you type or save.
+From the Command Palette (`Ctrl/Cmd+Shift+P`), or the editor title bar for a
+`.neura` file, use **Neura: Check File**, **Neura: Run File**, **Neura: Build
+Artifact** and **Neura: Format File**. **Neura: Show Compiler Output** opens the
+raw compiler log.
+
 ## Packages: `npack`
 
 ```sh
