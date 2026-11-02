@@ -1,0 +1,9 @@
+[package]
+name = "neura-formatter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+neura-ir = { path = "../../ir" }
+neura-compiler = { path = "../../compiler" }

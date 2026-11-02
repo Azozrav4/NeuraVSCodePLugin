@@ -1,0 +1,11 @@
+[package]
+name = "npack"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "npack"
+path = "src/main.rs"
+
+[dependencies]
