@@ -14,8 +14,16 @@ compiler for live error checking, build and run. It drives the compiler binary
 
 ## Features
 
-- Syntax highlighting for `.neura` files (`source.neura` TextMate grammar).
+- Syntax highlighting for `.neura` files (`source.neura` TextMate grammar),
+  including the current language: `**` exponentiation, `//` floor division,
+  the compound assignments (`+=`, `-=`, `*=`, `/=`, `//=`, `%=`, `**=`), the
+  `input(...)` builtin and the top-level `add ls` streaming directive.
+- Snippets for common constructs (`main`, `fn`, `struct`, `import`, `addls`,
+  `let`, `letmut`, `if`, `ifelse`, `for`, `while`, `input`, `sequential`,
+  `tensor`).
 - Live diagnostics: errors and warnings appear inline as you type or save.
+- Formatting: the **Neura: Format File** command, plus the standard
+  *Format Document* action, both run the canonical `neura fmt` formatter.
 - Commands (Command Palette or editor title bar for a `.neura` file):
   - **Neura: Check File** — parse, type-check and ownership-check.
   - **Neura: Run File** — compile, optimise and execute `main`.
@@ -55,8 +63,8 @@ Development Host* window with the extension loaded; the bundled
 **Option B — install it permanently as a `.vsix`.**
 
 ```sh
-npx @vscode/vsce package          # produces neura-0.1.0.vsix
-code --install-extension neura-0.1.0.vsix
+npx @vscode/vsce package          # produces neura-0.2.0.vsix
+code --install-extension neura-0.2.0.vsix
 ```
 
 Or use the VS Code UI: `Extensions` view → `...` menu → *Install from VSIX…*.
@@ -81,9 +89,10 @@ By default the extension looks for `neura` on your `PATH`, then for
 ## Repository layout
 
 ```
-package.json                 extension manifest (language, grammar, commands, settings)
-src/extension.ts             activation, diagnostics, commands, compiler invocation
+package.json                 extension manifest (language, grammar, snippets, commands, settings)
+src/extension.ts             activation, diagnostics, commands, formatting, compiler invocation
 syntaxes/neura.tmLanguage.json   TextMate grammar
+snippets/neura.json          snippets for common Neura constructs
 language-configuration.json  brackets, comments, indentation rules
 assets/                      extension icon
 .vscode/                     launch/tasks config for F5 debugging

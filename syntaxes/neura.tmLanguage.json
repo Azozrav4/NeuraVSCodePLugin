@@ -7,6 +7,7 @@
   ],
   "patterns": [
     { "include": "#comments" },
+    { "include": "#streaming-directive" },
     { "include": "#fn-definition" },
     { "include": "#struct-definition" },
     { "include": "#import" },
@@ -29,6 +30,17 @@
         {
           "name": "comment.line.number-sign.neura",
           "match": "#.*$"
+        }
+      ]
+    },
+    "streaming-directive": {
+      "patterns": [
+        {
+          "match": "^\\s*(add)\\s+(ls)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.directive.neura" },
+            "2": { "name": "keyword.control.directive.neura" }
+          }
         }
       ]
     },
@@ -105,7 +117,7 @@
       "patterns": [
         {
           "name": "support.function.neura",
-          "match": "\\b(print|zeros|ones|randn|arange|matmul|add|sub|mul|div|relu|gelu|sigmoid|tanh|exp|log|sqrt|softmax|transpose|reshape|flatten|sum|mean|max|min|conv1d|conv2d|gather|dropout|backward|no_grad|load_csv|load_dataset|cross_entropy|save|load)\\b"
+          "match": "\\b(print|input|len|range|int|float|abs|zeros|ones|randn|arange|matmul|add|sub|mul|div|relu|gelu|sigmoid|tanh|exp|log|sqrt|softmax|transpose|reshape|flatten|sum|mean|max|min|conv1d|conv2d|gather|dropout|backward|no_grad|load_csv|load_dataset|cross_entropy|save|load)\\b"
         }
       ]
     },
@@ -121,7 +133,7 @@
       "patterns": [
         {
           "name": "keyword.control.neura",
-          "match": "\\b(if|elif|else|while|for|in|return|break|continue|pass|requires_grad|forward|train|predict|parameters|step|zero_grad)\\b"
+          "match": "\\b(if|elif|else|while|for|in|return|break|continue|pass|requires_grad|forward|train|predict|inference|parameters|step|zero_grad)\\b"
         }
       ]
     },
@@ -168,7 +180,7 @@
       "patterns": [
         {
           "name": "keyword.operator.neura",
-          "match": "->|@|\\|\\||&&|==|!=|<=|>=|[+\\-*/%<>=!&]"
+          "match": "->|@|\\*\\*=|//=|\\|\\||&&|==|!=|<=|>=|\\+=|-=|\\*=|/=|%=|\\*\\*|//|[+\\-*/%<>=!&]"
         }
       ]
     },

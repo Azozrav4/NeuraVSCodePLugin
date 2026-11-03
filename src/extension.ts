@@ -208,35 +208,32 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!document) {
         return;
       }
-      const file = await ensureSaved(document);
-      if (!file) {
-        return;
-      }
-      const args = ["fmt", file];
-      report(`> neura ${args.join(" ")}`);
-      const result = await runCompiler(args, cwdFor(document.uri), report, warnMissingCompiler);
-      if (!result) {
-        return;
-      }
-      if (result.stdout) {
-        output.append(result.stdout.endsWith("\n") ? result.stdout : result.stdout + "\n");
-      }
-      if (result.stderr) {
-        output.append(result.stderr.endsWith("\n") ? result.stderr : result.stderr + "\n");
-      }
-      if (result.code !== 0) {
+      const edits = await computeFormatEdits(document, report, warnMissingCompiler);
+      if (!edits) {
         output.show(true);
         void vscode.window.showErrorMessage("Neura: format failed — see the Neura output channel.");
         return;
       }
-      // `neura fmt` rewrites the file on disk; pull the formatted text back in.
-      if (!document.isDirty) {
-        await vscode.commands.executeCommand("workbench.action.files.revert", document.uri);
+      if (edits.length === 0) {
+        void vscode.window.showInformationMessage("Neura: file is already formatted.");
+        return;
+      }
+      const edit = new vscode.WorkspaceEdit();
+      edit.set(document.uri, edits);
+      if (await vscode.workspace.applyEdit(edit)) {
         void vscode.window.showInformationMessage("Neura: file formatted.");
+      } else {
+        void vscode.window.showErrorMessage("Neura: could not apply formatting.");
       }
     }),
 
-    vscode.commands.registerCommand("neura.showOutput", () => output.show(true))
+    vscode.commands.registerCommand("neura.showOutput", () => output.show(true)),
+
+    // "Format Document" runs the canonical `neura fmt` formatter.
+    vscode.languages.registerDocumentFormattingEditProvider(LANGUAGE_ID, {
+      provideDocumentFormattingEdits: (document) =>
+        computeFormatEdits(document, report, warnMissingCompiler)
+    })
   );
 
   // Check documents that are already open when the extension activates.
@@ -307,6 +304,43 @@ async function checkDocument(
   }
 }
 
+function diagnosticRange(
+  document: vscode.TextDocument,
+  span: NeuraDiagnostic["span"]
+): vscode.Range {
+  const lastLine = Math.max(0, document.lineCount - 1);
+  const line = clamp((span?.line ?? 1) - 1, 0, lastLine);
+  const lineText = document.lineCount > 0 ? document.lineAt(line).text : "";
+  const startChar = clamp((span?.column ?? 1) - 1, 0, lineText.length);
+  const width = span && span.end > span.start ? span.end - span.start : 0;
+  const endChar = Math.min(startChar + width, lineText.length);
+  if (endChar > startChar) {
+    return new vscode.Range(line, startChar, line, endChar);
+  }
+  // The compiler uses zero-width spans for some errors (for example an
+  // unexpected end of file). Anchor the squiggle on the nearest preceding
+  // non-space character so the problem stays visible.
+  return anchorRange(document, line, startChar);
+}
+
+function anchorRange(document: vscode.TextDocument, line: number, char: number): vscode.Range {
+  let current = line;
+  let limit = char;
+  while (current >= 0) {
+    const text = document.lineAt(current).text;
+    let index = Math.min(limit, text.length) - 1;
+    while (index >= 0 && /\s/.test(text[index])) {
+      index -= 1;
+    }
+    if (index >= 0) {
+      return new vscode.Range(current, index, current, index + 1);
+    }
+    current -= 1;
+    limit = Number.MAX_SAFE_INTEGER;
+  }
+  return new vscode.Range(0, 0, 0, 1);
+}
+
 function toDiagnostic(diagnostic: NeuraDiagnostic, document: vscode.TextDocument): vscode.Diagnostic {
   const severity =
     diagnostic.severity === "error"
@@ -315,17 +349,7 @@ function toDiagnostic(diagnostic: NeuraDiagnostic, document: vscode.TextDocument
         ? vscode.DiagnosticSeverity.Warning
         : vscode.DiagnosticSeverity.Information;
 
-  const lastLine = Math.max(0, document.lineCount - 1);
-  const span = diagnostic.span;
-  const line = Math.min(Math.max(0, (span?.line ?? 1) - 1), lastLine);
-  const lineText = document.lineCount > 0 ? document.lineAt(line).text : "";
-  const startChar = Math.min(Math.max(0, (span?.column ?? 1) - 1), lineText.length);
-  const width = span && span.end > span.start ? span.end - span.start : 1;
-  let endChar = Math.min(startChar + width, lineText.length);
-  if (endChar <= startChar && lineText.length > 0) {
-    endChar = Math.min(startChar + 1, lineText.length);
-  }
-  const range = new vscode.Range(line, startChar, line, endChar);
+  const range = diagnosticRange(document, diagnostic.span);
 
   let message = diagnostic.message;
   if (diagnostic.help) {
@@ -467,6 +491,59 @@ async function ensureSaved(document: vscode.TextDocument): Promise<string | unde
     await document.save();
   }
   return document.uri.fsPath;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+/**
+ * Format the document with `neura fmt`. The current buffer is written to a
+ * temporary file (so unsaved edits are formatted too) and the formatted text is
+ * returned as a whole-document replacement, leaving the file on disk untouched.
+ */
+async function computeFormatEdits(
+  document: vscode.TextDocument,
+  report: (line: string) => void,
+  onMissingCompiler: () => void
+): Promise<vscode.TextEdit[] | undefined> {
+  const original = document.getText();
+  const temporary = writeTempSource(document);
+  try {
+    const args = ["fmt", temporary];
+    report(`> neura ${args.join(" ")}`);
+    const result = await runCompiler(args, cwdFor(document.uri), report, onMissingCompiler);
+    if (!result) {
+      return undefined;
+    }
+    if (result.stdout) {
+      report(result.stdout.trimEnd());
+    }
+    if (result.code !== 0) {
+      if (result.stderr) {
+        report(result.stderr.trimEnd());
+      }
+      return undefined;
+    }
+    const formatted = fs.readFileSync(temporary, "utf8");
+    if (formatted === original) {
+      return [];
+    }
+    const fullRange = new vscode.Range(
+      document.positionAt(0),
+      document.positionAt(original.length)
+    );
+    return [vscode.TextEdit.replace(fullRange, formatted)];
+  } catch (error) {
+    report(`[format] ${String(error)}`);
+    return undefined;
+  } finally {
+    try {
+      fs.unlinkSync(temporary);
+    } catch {
+      // Best effort cleanup only.
+    }
+  }
 }
 
 /** Extract the last JSON object found on its own line of `text`. */

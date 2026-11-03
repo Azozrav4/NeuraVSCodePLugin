@@ -1,8 +1,8 @@
 {
   "name": "neura",
   "displayName": "Neura",
-  "description": "Language support for the Neura numerical/ML programming language: syntax highlighting, live error checking, build and run.",
-  "version": "0.1.0",
+  "description": "Language support for the Neura numerical/ML programming language: syntax highlighting, snippets, live error checking, formatting, build and run.",
+  "version": "0.2.0",
   "publisher": "neura",
   "license": "MIT",
   "icon": "assets/neura-logo-vscode.png",
@@ -45,6 +45,12 @@
         "language": "neura",
         "scopeName": "source.neura",
         "path": "./syntaxes/neura.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "neura",
+        "path": "./snippets/neura.json"
       }
     ],
     "commands": [
