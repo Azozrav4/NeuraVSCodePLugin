@@ -10,6 +10,7 @@
 
 import * as vscode from "vscode";
 import { spawn } from "child_process";
+import type { ChildProcess } from "child_process";
 import * as crypto from "crypto";
 import * as fs from "fs";
 import * as os from "os";
@@ -41,16 +42,33 @@ interface RunResult {
   stderr: string;
 }
 
+/** Per-document bookkeeping so checks can be debounced, deduplicated and cancelled. */
+interface DocumentState {
+  timer?: NodeJS.Timeout;
+  child?: ChildProcess;
+  generation: number;
+  lastHash?: string;
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   const collection = vscode.languages.createDiagnosticCollection(DIAGNOSTIC_SOURCE);
   const output = vscode.window.createOutputChannel(OUTPUT_NAME);
-  const timers = new Map<string, NodeJS.Timeout>();
+  const states = new Map<string, DocumentState>();
   let missingCompilerReported = false;
 
   context.subscriptions.push(collection, output);
 
   const report = (line: string): void => {
     output.appendLine(line);
+  };
+
+  const stateFor = (key: string): DocumentState => {
+    let state = states.get(key);
+    if (!state) {
+      state = { generation: 0 };
+      states.set(key, state);
+    }
+    return state;
   };
 
   const warnMissingCompiler = (): void => {
@@ -74,6 +92,17 @@ export function activate(context: vscode.ExtensionContext): void {
       });
   };
 
+  /** Check a document, superseding any in-flight check for it. */
+  const check = (document: vscode.TextDocument, force = false): Promise<void> =>
+    checkDocument(
+      document,
+      stateFor(document.uri.toString()),
+      collection,
+      report,
+      warnMissingCompiler,
+      force
+    );
+
   const scheduleCheck = (document: vscode.TextDocument, delay = 300): void => {
     if (document.languageId !== LANGUAGE_ID) {
       return;
@@ -81,16 +110,14 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!getConfig().get<boolean>("checkOnType", true) && delay > 0) {
       return;
     }
-    const key = document.uri.toString();
-    const pending = timers.get(key);
-    if (pending) {
-      clearTimeout(pending);
+    const state = stateFor(document.uri.toString());
+    if (state.timer) {
+      clearTimeout(state.timer);
     }
-    const timer = setTimeout(() => {
-      timers.delete(key);
-      void checkDocument(document, collection, report, warnMissingCompiler);
+    state.timer = setTimeout(() => {
+      state.timer = undefined;
+      void checkDocument(document, state, collection, report, warnMissingCompiler, false);
     }, delay);
-    timers.set(key, timer);
   };
 
   context.subscriptions.push(
@@ -103,15 +130,23 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeTextDocument((event) => scheduleCheck(event.document)),
     vscode.workspace.onDidCloseTextDocument((document) => {
       const key = document.uri.toString();
-      const pending = timers.get(key);
-      if (pending) {
-        clearTimeout(pending);
-        timers.delete(key);
+      const state = states.get(key);
+      if (state) {
+        if (state.timer) {
+          clearTimeout(state.timer);
+        }
+        state.child?.kill();
+        states.delete(key);
       }
       collection.delete(document.uri);
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration("neura")) {
+        // Settings may change the compiler path or flags, so drop caches.
+        invalidateCompilerCache();
+        for (const state of states.values()) {
+          state.lastHash = undefined;
+        }
         for (const document of vscode.workspace.textDocuments) {
           scheduleCheck(document, 0);
         }
@@ -134,7 +169,7 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!document) {
         return;
       }
-      await checkDocument(document, collection, report, warnMissingCompiler);
+      await check(document, true);
       const count = collection.get(document.uri)?.length ?? 0;
       if (count === 0) {
         void vscode.window.showInformationMessage("Neura: no problems found.");
@@ -154,7 +189,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       // Refresh diagnostics first so compile failures are visible as squiggles.
-      await checkDocument(document, collection, report, warnMissingCompiler);
+      await check(document, true);
       const args = ["run", file, ...extraArgs()];
       report(`> neura ${args.join(" ")}`);
       const result = await runCompiler(args, cwdFor(document.uri), report, warnMissingCompiler);
@@ -254,12 +289,28 @@ export function deactivate(): void {
 
 async function checkDocument(
   document: vscode.TextDocument,
+  state: DocumentState,
   collection: vscode.DiagnosticCollection,
   report: (line: string) => void,
-  onMissingCompiler: () => void
+  onMissingCompiler: () => void,
+  force: boolean
 ): Promise<void> {
   if (document.languageId !== LANGUAGE_ID) {
     return;
+  }
+
+  const text = document.getText();
+  const hash = crypto.createHash("md5").update(text).digest("hex");
+  if (!force && state.lastHash === hash) {
+    // Nothing changed since the last successful check; skip the compiler run.
+    return;
+  }
+
+  // Supersede any check that is still running for this document.
+  const generation = ++state.generation;
+  if (state.child) {
+    state.child.kill();
+    state.child = undefined;
   }
 
   // `neura check` reads from disk, so unsaved buffers are written to a temp copy.
@@ -273,8 +324,23 @@ async function checkDocument(
 
     const args = ["check", target, "--json", ...extraArgs()];
     report(`> neura ${args.join(" ")}`);
-    const result = await runCompiler(args, cwdFor(document.uri), report, onMissingCompiler);
-    if (!result) {
+    let spawned: ChildProcess | undefined;
+    const result = await runCompiler(
+      args,
+      cwdFor(document.uri),
+      report,
+      onMissingCompiler,
+      (child) => {
+        spawned = child;
+        state.child = child;
+      }
+    );
+    if (state.child === spawned) {
+      state.child = undefined;
+    }
+    if (generation !== state.generation || !result) {
+      // Superseded by a newer check (or the compiler could not start): keep the
+      // previous diagnostics instead of applying a stale result.
       return;
     }
 
@@ -289,10 +355,13 @@ async function checkDocument(
       return;
     }
 
+    state.lastHash = hash;
     collection.set(document.uri, parsed.diagnostics.map((d) => toDiagnostic(d, document)));
   } catch (error) {
-    collection.delete(document.uri);
-    report(`[check] ${String(error)}`);
+    if (generation === state.generation) {
+      collection.delete(document.uri);
+      report(`[check] ${String(error)}`);
+    }
   } finally {
     if (temporary) {
       try {
@@ -373,7 +442,8 @@ function runCompiler(
   args: string[],
   cwd: string | undefined,
   report: (line: string) => void,
-  onMissingCompiler: () => void
+  onMissingCompiler: () => void,
+  onSpawn?: (child: ChildProcess) => void
 ): Promise<RunResult | undefined> {
   const binary = resolveCompilerPath();
   return new Promise<RunResult | undefined>((resolve) => {
@@ -386,6 +456,8 @@ function runCompiler(
       resolve(undefined);
       return;
     }
+
+    onSpawn?.(child);
 
     let stdout = "";
     let stderr = "";
@@ -416,8 +488,27 @@ function runCompiler(
   });
 }
 
+/**
+ * Resolving the compiler probes the filesystem, so cache the result until the
+ * configuration changes (see `invalidateCompilerCache`).
+ */
+let compilerCache: { configured: string; resolved: string } | undefined;
+
+function invalidateCompilerCache(): void {
+  compilerCache = undefined;
+}
+
 function resolveCompilerPath(): string {
   const configured = compilerConfig();
+  if (compilerCache?.configured === configured) {
+    return compilerCache.resolved;
+  }
+  const resolved = probeCompilerPath(configured);
+  compilerCache = { configured, resolved };
+  return resolved;
+}
+
+function probeCompilerPath(configured: string): string {
   const candidates: string[] = [];
   const looksLikePath =
     path.isAbsolute(configured) || configured.includes("/") || configured.includes("\\");
