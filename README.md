@@ -26,7 +26,9 @@ compiler for live error checking, build and run. It drives the compiler binary
   *Format Document* action, both run the canonical `neura fmt` formatter.
 - Commands (Command Palette or editor title bar for a `.neura` file):
   - **Neura: Check File** — parse, type-check and ownership-check.
-  - **Neura: Run File** — compile, optimise and execute `main`.
+  - **Neura: Run File** — compile, optimise and execute `main`. Runs in the
+    integrated terminal by default, so programs that call `input()` can read
+    from stdin.
   - **Neura: Build Artifact** — write a hash-verified `.neurabc` artifact.
   - **Neura: Format File** — canonical formatting.
   - **Neura: Show Compiler Output** — the raw compiler log.
@@ -85,6 +87,7 @@ By default the extension looks for `neura` on your `PATH`, then for
 | `neura.checkOnType` | `true` | Re-check for errors while typing (debounced). |
 | `neura.checkOnSave` | `true` | Check for errors on every save. |
 | `neura.compilerArgs` | `[]` | Extra flags for every invocation, e.g. `--opt=aggressive`. |
+| `neura.runInTerminal` | `true` | Run programs in the integrated terminal so `input()` can read stdin. Set to `false` to capture output in the Neura channel instead (non-interactive). |
 
 ## Repository layout
 

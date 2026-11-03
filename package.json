@@ -140,6 +140,11 @@
           },
           "default": [],
           "description": "Extra arguments passed to every `neura` invocation, for example `--opt=aggressive` or `--device=cpu`."
+        },
+        "neura.runInTerminal": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run programs in the integrated terminal so that `input()` can read from stdin. Disable to run with captured output in the Neura output channel (non-interactive; `input()` reads EOF)."
         }
       }
     }

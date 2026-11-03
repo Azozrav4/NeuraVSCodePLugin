@@ -154,6 +154,14 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
+  context.subscriptions.push(
+    vscode.window.onDidCloseTerminal((terminal) => {
+      if (terminal === runTerminal) {
+        runTerminal = undefined;
+      }
+    })
+  );
+
   const activeNeuraDocument = (): vscode.TextDocument | undefined => {
     const document = vscode.window.activeTextEditor?.document;
     if (!document || document.languageId !== LANGUAGE_ID) {
@@ -190,6 +198,14 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       // Refresh diagnostics first so compile failures are visible as squiggles.
       await check(document, true);
+
+      // Programs that call `input()` need a real terminal on stdin; the captured
+      // (piped) run below cannot supply one, so it is the fallback only.
+      if (getConfig().get<boolean>("runInTerminal", true)) {
+        runInTerminal(file, document);
+        return;
+      }
+
       const args = ["run", file, ...extraArgs()];
       report(`> neura ${args.join(" ")}`);
       const result = await runCompiler(args, cwdFor(document.uri), report, warnMissingCompiler);
@@ -437,6 +453,35 @@ function toDiagnostic(diagnostic: NeuraDiagnostic, document: vscode.TextDocument
 // ---------------------------------------------------------------------------
 // Compiler process plumbing
 // ---------------------------------------------------------------------------
+
+/** Reused integrated terminal so repeated runs keep their output in one place. */
+let runTerminal: vscode.Terminal | undefined;
+
+/**
+ * Run `neura run FILE` in an integrated terminal. Unlike the captured run, the
+ * terminal gives the program a real TTY on stdin, so `input()` works.
+ */
+function runInTerminal(file: string, document: vscode.TextDocument): void {
+  const command = [resolveCompilerPath(), "run", file, ...extraArgs()]
+    .map(shellQuote)
+    .join(" ");
+  if (!runTerminal || runTerminal.exitStatus !== undefined) {
+    runTerminal = vscode.window.createTerminal({
+      name: "Neura",
+      cwd: cwdFor(document.uri),
+    });
+  }
+  runTerminal.show(true);
+  runTerminal.sendText(command, true);
+}
+
+/** Quote one argument for the integrated terminal's shell. */
+function shellQuote(value: string): string {
+  if (process.platform === "win32") {
+    return `"${value.replace(/"/g, '\\"')}"`;
+  }
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
 
 function runCompiler(
   args: string[],
